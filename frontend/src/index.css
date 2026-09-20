@@ -8,13 +8,28 @@
   }
   body {
     @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 90% 55% at 50% -15%, rgba(99, 102, 241, 0.16), transparent),
+      radial-gradient(ellipse 55% 40% at 85% -5%, rgba(139, 92, 246, 0.12), transparent),
+      radial-gradient(ellipse 45% 35% at 8% 4%, rgba(34, 211, 238, 0.06), transparent);
+    background-attachment: fixed;
   }
   ::selection {
-    @apply bg-amber-500/30 text-ink-50;
+    @apply bg-brand-500/40 text-ink-50;
   }
   * {
     @apply border-ink-700;
   }
+}
+
+/* subtle blueprint grid, fading out towards the bottom */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(129, 140, 248, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(129, 140, 248, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, black 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, black 25%, transparent 78%);
 }
 
 /* thin scrollbar for the log panel */
