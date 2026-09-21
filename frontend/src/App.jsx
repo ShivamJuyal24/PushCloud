@@ -1,105 +1,49 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Card } from './components/ui/card';
-import { Github, Rocket, ExternalLink, CircleDot, Loader2 } from 'lucide-react';
+import { Github, Rocket, LogOut } from 'lucide-react';
+import { supabase } from './lib/supabaseClient';
+import { useSession } from './lib/useSession';
+import { apiFetch } from './lib/api';
 
-// ---- Backend endpoints ----
-// Change these two if your servers run on different hosts/ports.
-const API_URL = 'http://localhost:5000';
-const SOCKET_URL = 'http://localhost:9002';
-
-// Status machine: idle -> deploying -> live | error
 export default function App() {
+  const session = useSession();
+  const navigate = useNavigate();
+
   const [gitUrl, setGitUrl] = useState('');
-  const [status, setStatus] = useState('idle');
-  const [projectId, setProjectId] = useState(null);
-  const [liveUrl, setLiveUrl] = useState(null);
-  const [logs, setLogs] = useState([]);
+  const [deploying, setDeploying] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  const socketRef = useRef(null);
-  const logEndRef = useRef(null);
-
-  // Autoscroll the log panel as new lines arrive
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [logs]);
-
-  // Clean up the socket connection on unmount
-  useEffect(() => {
-    return () => {
-      socketRef.current?.disconnect();
-    };
-  }, []);
-
-  function appendLog(line) {
-    setLogs((prev) => [...prev, { text: line, at: Date.now() }]);
+  async function handleSignIn() {
+    await supabase.auth.signInWithOAuth({
+      provider: 'github',
+      options: { redirectTo: window.location.origin }
+    });
   }
 
-  function connectToLogs(id) {
-    // Fresh socket per deploy keeps this simple and avoids stale subscriptions.
-    socketRef.current?.disconnect();
-
-    const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
-
-    socket.on('connect', () => {
-      appendLog(`Connected to log stream`);
-      socket.emit('subscribe', `logs:${id}`);
-    });
-
-    socket.on('message', (msg) => {
-      appendLog(msg);
-      // The builder's final line looks like: "🌐 Visit: http://<slug>.localhost:8000"
-      const match = typeof msg === 'string' && msg.match(/https?:\/\/[^\s]+\.localhost:8000/);
-      if (match) {
-        setLiveUrl(match[0]);
-        setStatus('live');
-      }
-    });
-
-    socket.on('connect_error', (err) => {
-      appendLog(`Socket connection error: ${err.message}`);
-      setStatus('error');
-      setErrorMsg('Could not connect to the log stream (check the socket server port).');
-    });
+  async function handleSignOut() {
+    await supabase.auth.signOut();
   }
 
   async function handleDeploy(e) {
     e.preventDefault();
-    if (!gitUrl.trim()) return;
+    if (!gitUrl.trim() || !session) return;
 
-    setStatus('deploying');
+    setDeploying(true);
     setErrorMsg(null);
-    setLogs([]);
-    setLiveUrl(null);
-    setProjectId(null);
 
     try {
-      const res = await fetch(`${API_URL}/project`, {
+      const { data } = await apiFetch('/deployments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gitUrl: gitUrl.trim() })
       });
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Request failed with ${res.status}`);
-      }
-
-      const data = await res.json();
-      const id = data?.data?.projectId;
-
-      if (!id) throw new Error('Response did not include a projectId.');
-
-      setProjectId(id);
-      appendLog(`Queued as ${id}`);
-      connectToLogs(id);
+      navigate(`/deployments/${data.deployment.id}`);
     } catch (err) {
-      setStatus('error');
       setErrorMsg(err.message);
+      setDeploying(false);
     }
   }
 
@@ -122,14 +66,38 @@ export default function App() {
               pushcloud
             </span>
           </div>
-          <StatusPill status={status} />
+
+          <div className="flex items-center gap-3">
+            {session && (
+              <Link to="/dashboard" className="font-mono text-xs text-ink-300 hover:text-ink-50">
+                Dashboard
+              </Link>
+            )}
+            {session === undefined ? null : session ? (
+              <button
+                onClick={handleSignOut}
+                className="flex items-center gap-1.5 font-mono text-xs text-ink-300 hover:text-ink-50"
+              >
+                <LogOut size={13} />
+                Sign out
+              </button>
+            ) : (
+              <button
+                onClick={handleSignIn}
+                className="flex items-center gap-1.5 rounded-md border border-ink-700 px-3 py-1.5 font-mono text-xs text-ink-200 hover:border-brand-400/50"
+              >
+                <Github size={13} />
+                Sign in with GitHub
+              </button>
+            )}
+          </div>
         </header>
 
         {/* Hero */}
         <div className="mb-10 text-center">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 font-mono text-[11px] text-brand-300">
             <span className="h-1 w-1 rounded-full bg-brand-400" />
-            zero-config deployments
+            deploy supported static GitHub projects
           </p>
           <h1 className="mx-auto max-w-xl text-4xl font-semibold tracking-tight text-ink-50 sm:text-5xl">
             Ship your repos{' '}
@@ -138,106 +106,50 @@ export default function App() {
             </span>
           </h1>
           <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-ink-300">
-            Paste a Git URL, watch the build stream live, and get a public URL.
-            No YAML, no servers to babysit.
+            Paste a public GitHub repo URL, watch the build stream live, and get a public URL.
+          </p>
+          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-ink-400">
+            Supports Vite, Create React App, and plain static HTML. Public repos only — no
+            private repos, custom domains, or server-side rendering yet.
           </p>
         </div>
 
         {/* Deploy form */}
         <Card className="p-6">
-          <form onSubmit={handleDeploy} className="flex flex-col gap-4 sm:flex-row">
-            <div className="relative flex-1">
-              <Github
-                size={16}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"
-              />
-              <Input
-                value={gitUrl}
-                onChange={(e) => setGitUrl(e.target.value)}
-                placeholder="https://github.com/user/repo"
-                className="pl-9"
-                disabled={status === 'deploying'}
-              />
+          {session ? (
+            <form onSubmit={handleDeploy} className="flex flex-col gap-4 sm:flex-row">
+              <div className="relative flex-1">
+                <Github
+                  size={16}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"
+                />
+                <Input
+                  value={gitUrl}
+                  onChange={(e) => setGitUrl(e.target.value)}
+                  placeholder="https://github.com/user/repo"
+                  className="pl-9"
+                  disabled={deploying}
+                />
+              </div>
+              <Button type="submit" disabled={deploying || !gitUrl.trim()} className="sm:w-32">
+                {deploying ? 'Deploying…' : 'Deploy'}
+              </Button>
+            </form>
+          ) : session === undefined ? (
+            <p className="text-center font-mono text-xs text-ink-400">Loading…</p>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-2 text-center">
+              <p className="font-mono text-xs text-ink-400">Sign in with GitHub to deploy a project.</p>
+              <Button onClick={handleSignIn} className="w-fit">
+                <Github size={14} />
+                Sign in with GitHub
+              </Button>
             </div>
-            <Button
-              type="submit"
-              disabled={status === 'deploying' || !gitUrl.trim()}
-              className="sm:w-32"
-            >
-              {status === 'deploying' ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" />
-                  Deploying
-                </>
-              ) : (
-                'Deploy'
-              )}
-            </Button>
-          </form>
-
-          {errorMsg && (
-            <p className="mt-3 font-mono text-xs text-err">{errorMsg}</p>
           )}
+
+          {errorMsg && <p className="mt-3 font-mono text-xs text-err">{errorMsg}</p>}
         </Card>
-
-        {/* Live URL banner */}
-        {liveUrl && (
-          <a
-            href={liveUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 flex items-center justify-between rounded-md border border-ok/30 bg-ok/10 px-4 py-3 text-sm text-ok transition-colors hover:bg-ok/15"
-          >
-            <span className="font-mono">{liveUrl}</span>
-            <ExternalLink size={15} />
-          </a>
-        )}
-
-        {/* Log panel */}
-        {(logs.length > 0 || status !== 'idle') && (
-          <Card className="mt-4 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-ink-700/70 px-4 py-2.5">
-              <span className="font-mono text-xs text-ink-300">
-                {projectId ? `logs:${projectId}` : 'logs'}
-              </span>
-              {status === 'deploying' && (
-                <span className="flex items-center gap-1.5 font-mono text-xs text-brand-300">
-                  <CircleDot size={11} className="animate-pulse" />
-                  building
-                </span>
-              )}
-            </div>
-            <div className="log-scroll h-80 overflow-y-auto px-4 py-3">
-              {logs.map((log, i) => (
-                <div
-                  key={i}
-                  className="whitespace-pre-wrap break-all font-mono text-[13px] leading-relaxed text-ink-200"
-                >
-                  {log.text}
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
-          </Card>
-        )}
       </div>
-    </div>
-  );
-}
-
-function StatusPill({ status }) {
-  const map = {
-    idle: { label: 'idle', dot: 'bg-ink-400' },
-    deploying: { label: 'deploying', dot: 'bg-brand-400 animate-pulse' },
-    live: { label: 'live', dot: 'bg-ok' },
-    error: { label: 'error', dot: 'bg-err' }
-  };
-  const s = map[status] ?? map.idle;
-
-  return (
-    <div className="flex items-center gap-2 rounded-full border border-ink-700 px-3 py-1">
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      <span className="font-mono text-[11px] text-ink-300">{s.label}</span>
     </div>
   );
 }

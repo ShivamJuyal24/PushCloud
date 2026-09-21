@@ -2,17 +2,17 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { generateSlug } = require('random-word-slugs');
 const { Server } = require('socket.io');
 const Redis = require('ioredis');
-const { exec } = require('child_process');
 
-const PORT = 5000;
+const projectsRouter = require('./routes/projects');
+const { updateStatusBySlug } = require('./services/deployments');
+
+const PORT = process.env.PORT || 5000;
 const app = express();
 
 const subscriber = new Redis(process.env.REDIS_URL);
 
-// Fixed: cors must be an object, not a string
 const io = new Server({
   cors: {
     origin: '*',
@@ -31,84 +31,49 @@ io.on('connection', (socket) => {
   });
 });
 
-// Added: CORS for the Express API itself — must come before routes
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type']
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
 
-app.post('/project', async (req, res) => {
-  try {
-    const { gitUrl } = req.body;
+app.use(projectsRouter);
 
-    if (!gitUrl) {
-      return res.status(400).json({ error: 'gitUrl is required' });
-    }
-
-    const projectSlug = generateSlug();
-
-    console.log('═══════════════════════════════════════');
-    console.log('🚀 Starting local build for project:', projectSlug);
-    console.log('📋 Git URL:', gitUrl);
-    console.log(
-      '📋 Redis URL:',
-      process.env.REDIS_URL
-        ? `✅ Set (length: ${process.env.REDIS_URL.length})`
-        : '❌ Missing'
-    );
-    console.log('═══════════════════════════════════════');
-
-    const dockerCommand = `docker run --rm \
--e GIT_REPOSITORY__URL="${gitUrl}" \
--e PROJECT_ID="${projectSlug}" \
--e BUCKET_NAME="vercel" \
--e REDIS_URL="${process.env.REDIS_URL}" \
-builder-image`;
-
-    exec(dockerCommand, (error, stdout, stderr) => {
-      if (error) {
-        console.error('❌ Docker build failed:', error);
-        return;
-      }
-
-      if (stdout) {
-        console.log(stdout);
-      }
-
-      if (stderr) {
-        console.error(stderr);
-      }
-    });
-
-    console.log('✅ Docker container started');
-
-    res.json({
-      status: 'queued',
-      data: {
-        projectId: projectSlug,
-        url: `http://${projectSlug}.localhost:8000`
-      }
-    });
-  } catch (err) {
-    console.error('❌ Build failed to start:', err);
-
-    res.status(500).json({
-      error: 'Internal server error',
-      details: err.message
-    });
-  }
-});
+app.get('/health', (req, res) => res.json({ ok: true }));
 
 async function initRedisSubscriber() {
   console.log('Initializing Redis subscriber...');
 
-  await subscriber.psubscribe('logs:*');
+  // logs:<slug>   -> raw build output, forwarded straight to the browser
+  // status:<slug> -> structured lifecycle events from build-server, persisted
+  //                  to Postgres so a page refresh still shows the truth
+  await subscriber.psubscribe('logs:*', 'status:*');
 
-  subscriber.on('pmessage', (pattern, channel, message) => {
+  subscriber.on('pmessage', async (pattern, channel, message) => {
+    // Forward everything to any live socket.io listeners on this channel —
+    // the frontend can react instantly while a build is in progress.
     io.to(channel).emit('message', message);
+
+    if (pattern !== 'status:*') return;
+
+    const publicSlug = channel.slice('status:'.length);
+
+    let payload;
+    try {
+      payload = JSON.parse(message);
+    } catch (err) {
+      console.error('❌ Could not parse status message on', channel, ':', message);
+      return;
+    }
+
+    try {
+      await updateStatusBySlug(publicSlug, payload);
+      console.log(`📝 Deployment ${publicSlug} status → ${payload.status}`);
+    } catch (err) {
+      console.error(`❌ Failed to persist status for ${publicSlug}:`, err);
+    }
   });
 }
 

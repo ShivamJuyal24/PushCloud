@@ -1,11 +1,14 @@
 require('dotenv').config();
 const Redis = require('ioredis');
 
-// Replace with your actual Redis URL
-const REDIS_URL = 'rediss://default:AWa0AAIncDIxOWNiZTVhZWM1Zjk0MzQ1YjQwYzFjNTAwMDBkMzliYXAyMjYyOTI@fleet-man-26292.upstash.io:6379';
+const REDIS_URL = process.env.REDIS_URL;
+if (!REDIS_URL) {
+  console.error('❌ Missing REDIS_URL environment variable. Set it in your .env file.');
+  process.exit(1);
+}
 
-// Replace with your actual project ID
-const PROJECT_ID = 'deafening-dead-planet';
+// Replace with your actual project ID, or also pull from env if it varies per environment
+const PROJECT_ID = process.env.PROJECT_ID || 'deafening-dead-planet';
 
 const publisher = new Redis(REDIS_URL);
 
@@ -29,7 +32,6 @@ async function testPublish() {
       console.log('Make sure your api-server is running and subscribed to logs:*');
     }
 
-    // Publish a few more test messages
     for (let i = 1; i <= 5; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const testMsg = JSON.stringify({ log: `🧪 Test message ${i}` });

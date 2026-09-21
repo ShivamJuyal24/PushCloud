@@ -1,0 +1,42 @@
+At this stage, the API server is not running yet. npm start currently fails with:
+                                                                                                                                                                    
+  TypeError: app.use() requires a middleware function                                                                                                               
+                                                                                                                                                                    
+  Why: [index.js](C:\Users\shivam juyal\Desktop\vercel-clone\api-server\index.js:42) loads ./routes/projects, but [routes/projects.js](C:\Users\shivam              
+  juyal\Desktop\vercel-clone\api-server\routes\projects.js:53) exports { requireAuth }, not an Express router. There are also currently no project/deployment HTTP  
+  routes defined—only /health.                                                                                                                                      
+                                                                                                                                                                    
+  What to do next:                                                                                                                                                  
+                                                                                                                                                                    
+  1. Fix the project router setup: routes/projects.js should be the Express router; authentication belongs in middleware/auth.js.                                   
+  2. Add and connect the API endpoints your frontend needs: create deployment, list projects, list deployments, and get deployment status.                          
+  3. Connect deployment creation to the build worker/ECS or Docker workflow. Right now the database service functions exist, but no API route calls them.
+  4. Keep Redis status publishing/subscribing aligned with the build server so build status updates reach both Postgres and Socket.IO.                              
+  5. Separate configuration names: Prisma uses SUPABASE_URL as a PostgreSQL directUrl, but [middleware/auth.js](C:\Users\shivam juyal\Desktop\vercel-clone\api-     
+     server\middleware\auth.js:45) treats that same variable as an HTTPS Supabase API URL for JWKS. Those must be two separate environment variables.               
+                                                                                                                                                                    
+  Also, prisma migrate status currently reports it cannot reach the configured aws-...pooler.supabase.com:5432 host. For Prisma migrations, ensure directUrl is the 
+  actual Supabase direct database connection host—not a pooler hostname with the direct port.                                                                       
+                                                                                                                                                                    
+  How to test once the router/startup issue is fixed:                                                                                                               
+                                                                                                                                                                    
+  - Run npm start; it should remain running and show API and WebSocket startup messages.                                                                            
+  - In a second terminal run:                                                                                                                                       
+                                                                                                                                                                    
+  Invoke-RestMethod http://localhost:5000/health                                                                                                                    
+                                                                                                                                                                    
+  Expected: { "ok": true }.                                                                                                                                         
+                                                                                                                                                                    
+  - Test an authenticated project/deployment request using a real Supabase access token. Confirm it creates rows in Prisma Studio:                                  
+                                                                                                                                                                    
+  npx prisma studio                                                                                                                                                 
+                                                                                                                                                                    
+  - Submit a public GitHub repository, then verify:                                                                                                                 
+      - a users row is created on first authenticated request;                                                                                                      
+      - a projects row is created;                                                                                                                                  
+      - a deployments row begins as queued;                                                                                                                         
+      - Redis status events move it through building / ready or failed;                                                                                             
+      - the frontend receives Socket.IO messages and shows the saved deployment status after refresh.                                                               
+                                                                                                                                                                    
+  One security note: rotate any database, Redis, AWS, and Supabase credentials that have been exposed outside your private environment, and keep .env uncommitted.  
+                                             

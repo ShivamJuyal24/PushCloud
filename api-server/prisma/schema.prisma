@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+// Identity lives in Supabase Auth (auth.users). This table is a synced
+// profile row, created/updated the first time a verified Supabase JWT hits
+// the API (see middleware/auth.js). supabaseUserId is the link back to
+// Supabase's `sub` claim.
+model User {
+  id             String   @id @default(uuid())
+  supabaseUserId String   @unique @map("supabase_user_id")
+  githubId       String?  @unique @map("github_id")
+  email          String?  @unique
+  name           String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  projects Project[]
+
+  @@map("users")
+}
+
+model Project {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  user          User     @relation(fields: [userId], references: [id])
+  repositoryUrl String   @map("repository_url")
+  name          String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  deployments Deployment[]
+
+  @@unique([userId, repositoryUrl])
+  @@map("projects")
+}
+
+enum DeploymentStatus {
+  queued
+  building
+  uploading
+  ready
+  failed
+  cancelled
+}
+
+model Deployment {
+  id              String           @id @default(uuid())
+  projectId       String           @map("project_id")
+  project         Project          @relation(fields: [projectId], references: [id])
+  publicSlug      String           @unique @map("public_slug")
+  status          DeploymentStatus @default(queued)
+  gitUrl          String           @map("git_url")
+  commitSha       String?          @map("commit_sha")
+  buildStartedAt  DateTime?        @map("build_started_at")
+  buildFinishedAt DateTime?        @map("build_finished_at")
+  publicUrl       String?          @map("public_url")
+  failureReason   String?          @map("failure_reason")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  @@map("deployments")
+}
+
+// DeploymentLog is intentionally not modeled yet — logs stay ephemeral,
+// streamed over Redis/Socket.IO for the life of a build. Add a table (or
+// move to object storage) if persisted, replayable logs are needed later.
